@@ -1,0 +1,23 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.11.35312.102
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{888888A0-9F3D-457C-B088-3A5042F75D52}") = "chainlink_analytics_Multi", "chainlink_analytics_Multi.pyproj", "{DDBB7027-E6C0-4FB4-89EA-0EE89D4C28C6}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{DDBB7027-E6C0-4FB4-89EA-0EE89D4C28C6}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{DDBB7027-E6C0-4FB4-89EA-0EE89D4C28C6}.Release|Any CPU.ActiveCfg = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {EFAA360D-50B8-4B94-92E9-2306043A00DB}
+	EndGlobalSection
+EndGlobal

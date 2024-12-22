@@ -1,0 +1,32 @@
+.vs/
+*.vsidx
+*.vscode
+*.env
+__pycache__/
+*.pyc
+.DS_Store
+
+
+# Python cache files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual environments
+venv/
+*.env
+
+# IDE and editor settings
+.vs/
+.vscode/
+*.idea/
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs and temporary files
+*.log
+
+chainlinkanalytics_env/
