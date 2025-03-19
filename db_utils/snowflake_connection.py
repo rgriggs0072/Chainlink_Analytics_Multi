@@ -4,81 +4,19 @@ import logging
 import pandas as pd
 import os
 
-def validate_toml_info(toml_info):
-    required_keys = ["account", "snowflake_user", "password", "warehouse", "database", "schema"]
-    missing_keys = [key for key in required_keys if key not in toml_info or not toml_info[key]]
-    if missing_keys:
-        logging.error(f"TOML configuration is incomplete or invalid. Missing: {missing_keys}")
-        st.error(f"TOML configuration is incomplete or invalid. Check the configuration.")
-        return False
-    return True
-
-
-
-
-def fetch_and_store_toml_info(tenant_id):
-    try:
-        conn = get_snowflake_connection()  # Fetch Snowflake connection
-        cursor = conn.cursor()
-
-        # Fetch TOML information based on the tenant_id
-        query = """
-        SELECT snowflake_user, password, account, warehouse, database, schema, logo_path, tenant_name
-        FROM TOML
-        WHERE TENANT_ID = %s
-        """
-        cursor.execute(query, (tenant_id,))
-        toml_info = cursor.fetchone()
-        cursor.close()
-        conn.close()
-
-        if toml_info:
-            keys = ["snowflake_user", "password", "account", "warehouse", "database", "schema", "logo_path", "tenant_name"]
-            toml_dict = dict(zip(keys, toml_info))
-            print("Now what the hell toml info do you have big daddy? ", toml_info)
-            
-            # Store the TOML info in session state
-            st.session_state['toml_info'] = toml_dict
-            st.session_state['tenant_name'] = toml_dict['tenant_name']
-            return True  # Indicate successful fetch and store
-        else:
-            logging.error(f"No TOML configuration found for tenant_id: {tenant_id}")
-            return False  # Indicate failure in fetching TOML info
-    except Exception as e:
-        logging.error(f"Failed to fetch TOML info due to: {str(e)}")
-        return False  # Handle the error appropriately
-
-
-
 def get_snowflake_connection():
-    
+    """Connects to Snowflake using secrets.toml (default connection)"""
     try:
-        # Load Snowflake credentials from the secrets.toml file
-        snowflake_creds = st.secrets["chainlink"]
-
-        # Create and return a Snowflake connection object
-        conn = snowflake.connector.connect(
-            account=snowflake_creds["account"],
-            user=snowflake_creds["user"],
-            password=snowflake_creds["password"],
-            warehouse=snowflake_creds["warehouse"],
-            database=snowflake_creds["database"],
-            schema=snowflake_creds["schema"]
-        )
+        conn = snowflake.connector.connect(**st.secrets["snowflake"])
         return conn
     except Exception as e:
-        st.error("Failed to connect to Snowflake: " + str(e))
+        logging.error(f"Failed to connect to Snowflake: {str(e)}")
+        st.error(f"Failed to connect to Snowflake: {str(e)}")
         return None
-    
 
 def get_snowflake_toml(toml_info):
     try:
-        if not all(key in toml_info for key in ["account", "snowflake_user", "password", "warehouse", "database", "schema"]):
-            logging.error("TOML configuration is incomplete or invalid.")
-            st.error("TOML configuration is incomplete or invalid.")
-            return None
-        
-        conn_toml = snowflake.connector.connect(
+        conn = snowflake.connector.connect(
             account=toml_info['account'],
             user=toml_info['snowflake_user'],
             password=toml_info['password'],
@@ -86,31 +24,54 @@ def get_snowflake_toml(toml_info):
             database=toml_info['database'],
             schema=toml_info['schema']
         )
-        logging.info("Successfully connected to Snowflake.")
-        return conn_toml
+        return conn
     except Exception as e:
-        logging.error(f"Failed to connect to Snowflake with TOML info: {str(e)}")
-        st.error(f"Failed to connect to Snowflake with TOML info: {str(e)}")
+        logging.error(f"TOML connection failed: {str(e)}")
+        st.error(f"TOML connection failed: {str(e)}")
         return None
 
+def fetch_and_store_toml_info(tenant_id):
+    try:
+        conn = get_snowflake_connection()  # Fetch Snowflake connection
+        cursor = conn.cursor()
 
-def get_tenant_id(username):
-    conn = get_snowflake_connection()
-    cursor = conn.cursor()
+        cursor.execute("""
+            SELECT snowflake_user, password, account, warehouse, database, schema, logo_path, tenant_name
+            FROM TOML 
+            WHERE TENANT_ID = %s
+        """, (tenant_id,))
+        
+        result = cursor.fetchone()
+        
+        if not result:
+            st.error("No TOML configuration found for this tenant.")
+            logging.error(f"No TOML configuration found for tenant_id: {tenant_id}")
+            return False
 
-    query = """
-    SELECT TENANT_ID FROM USERDATA WHERE UPPER(USERNAME) = %s
-    """
-    cursor.execute(query, (username.upper(),))
-    result = cursor.fetchone()
+        keys = ['snowflake_user', 'password', 'account', 'warehouse', 'database', 'schema', 'logo_path', 'tenant_name']
+        toml_dict = dict(zip(keys, result))
+        
+        st.session_state['toml_info'] = toml_dict = toml_dict = dict(zip(keys, result))
+        st.session_state['tenant_name'] = toml_dict['tenant_name']
+        return True
 
-    cursor.close()
-    conn.close()
+    except Exception as e:
+        logging.error(f"Failed to fetch TOML info due to: {str(e)}")
+        st.error(f"Failed to fetch TOML info: {str(e)}")
+        return False
 
-    if result:
-        return result[0]
-    else:
-        return None
+    finally:
+        cursor.close()
+        conn.close()
+
+
+def validate_toml_info(toml_info):
+    required_keys = ["account", "snowflake_user", "password", "warehouse", "database", "schema"]
+    missing_keys = [key for key in required_keys if key not in toml_info or not toml_info[key]]
+    if missing_keys:
+        st.error(f"TOML configuration missing keys: {missing_keys}")
+        return False
+    return True
 
 
 
@@ -130,7 +91,7 @@ def execute_query_and_close_connection(query, conn_toml):
         # Ensure the connection is open
         if conn_toml.is_closed():
             # Try to re-establish the connection if it's closed
-            conn_toml = get_snowflake_toml(st.session_state['toml_info'])
+            conn_toml = get_snowflake_connection_toml(st.session_state['toml_info'])
         
         # If the connection is still closed, raise an error
         if conn_toml is None or conn_toml.is_closed():

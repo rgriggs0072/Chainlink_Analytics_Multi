@@ -1,4 +1,4 @@
-import streamlit as st
+﻿import streamlit as st
 import snowflake.connector
 import logging
 import pandas as pd
@@ -14,6 +14,39 @@ import socket
 
 #from db_utils.snowflake_utils import create_gap_report, get_snowflake_connection, execute_query_and_close_connection, get_snowflake_toml, validate_toml_info, fetch_and_store_toml_info, fetch_chain_schematic_data
 
+
+
+def get_tenant_sales_report(toml_info):
+    """Fetch sales data for the logged-in tenant dynamically."""
+
+    conn_toml = None  # Define connection variable outside try block
+
+    try:
+        # Establish Snowflake connection
+        conn_toml = get_snowflake_toml(toml_info)
+        
+        if conn_toml is None:
+            logging.error("Failed to establish Snowflake connection.")
+            return None  
+
+        query = f"""
+            SELECT STORE_NUMBER, STORE_NAME, PRODUCT_NAME, UPC, PURCHASED_YES_NO, LAST_UPLOAD_DATE
+            FROM {toml_info['schema']}.SALES_REPORT
+            WHERE LAST_UPLOAD_DATE >= CURRENT_DATE - INTERVAL '90 days'
+        """
+
+        # Execute query
+        df = pd.read_sql(query, conn_toml)
+
+        return df
+    
+    except Exception as e:
+        logging.error(f"Error retrieving sales data: {str(e)}")
+        return None  # Return None instead of crashing
+
+    finally:
+        if conn_toml is not None:
+            conn_toml.close()  # Ensure connection is closed
 
 
 
@@ -167,15 +200,18 @@ def fetch_user_credentials():
         conn = get_snowflake_connection()
         cursor = conn.cursor()
 
-        # Query to get all users, their hashed passwords, and tenant IDs
+        # Query to get all users, including their active status
         query = """
-        SELECT u.USERNAME, u.HASHED_PASSWORD, u.TENANT_ID, u.EMAIL, r.ROLE_NAME
+        SELECT u.USERNAME, u.HASHED_PASSWORD, u.TENANT_ID, u.EMAIL, r.ROLE_NAME, u.IS_ACTIVE
         FROM USERDATA u
         LEFT JOIN USER_ROLES ur ON u.USER_ID = ur.USER_ID
         LEFT JOIN ROLES r ON ur.ROLE_ID = r.ROLE_ID
+        
         """
         cursor.execute(query)
         users = cursor.fetchall()
+
+       # print ("users")
 
         # Initialize credentials dictionary for streamlit-authenticator
         credentials = {
@@ -188,25 +224,36 @@ def fetch_user_credentials():
             tenant_id = user[2]
             email = user[3]
             role_name = user[4]
-             
+            is_active = user[5]  # Active status
 
-            # Prepare the credentials dictionary
+
+            # Include the user's active status in the credentials dictionary
             credentials['usernames'][username] = {
                 'name': username,
                 'password': password_hash,  # Hashed password for streamlit-authenticator
                 'tenant_id': tenant_id,
                 'useremail': email,
-                'roles': [role_name]  # Store roles in an array
+                'roles': [role_name],  # Store roles in an array
+                'is_active': is_active  # Include active status
             }
 
+          #  print (f"user name and password are : ", user, password_hash)
         cursor.close()
         conn.close()
+
+        #st.write("DEBUG: Fetched Users →", users)
+
 
         return credentials
 
     except Exception as e:
         print(f"Error fetching user credentials: {e}")
         return None
+
+
+
+
+
 
 
 
@@ -831,3 +878,76 @@ def upload_distro_grid_to_snowflake(df, selected_option, update_spinner_callback
     # Update spinner message for procedure completion
     update_spinner_callback(f"Completed Final {selected_option} Update Procedure")
     st.write("Data has been imported into Snowflake table: Distro_Grid")
+
+
+
+
+
+    # ============================================================================================================================================================
+# Function to check if todays privot table data has processed.  If so will give user option to overwrite the data and if not the procedure BUILD_GAP_TRACKING()
+# Procedure will update the table SALESPERSON_EXECUTION_SUMMARY_TBL with todays data
+# ============================================================================================================================================================
+
+# Function to check and process data
+def check_and_process_data():
+    # Retrieve toml_info from session state
+    toml_info = st.session_state.get('toml_info')
+    if not toml_info:
+        st.error("TOML information is not available. Please check the tenant ID and try again.")
+        return
+ 
+        # Create a connection to Snowflake
+        conn_toml = snowflake_connection.get_snowflake_toml(toml_info)
+
+        # Create a cursor object
+        cursor = conn_toml.cursor()
+
+        try:
+            # Check if data already processed for today
+            check_query = f"SELECT COUNT(*) FROM SALESPERSON_EXECUTION_SUMMARY_TBL WHERE LOG_DATE = CURRENT_DATE()"
+            cursor.execute(check_query)
+            result = cursor.fetchone()
+
+            if result[0] > 0:
+                # Data already processed for today, ask if they want to overwrite
+                st.warning("Data for today already processed. Do you want to overwrite it?")
+
+                # Add "Yes" and "No" buttons
+                yes_button = st.button("Yes, overwrite")
+                no_button = st.button("No, keep existing data")
+
+                if yes_button:
+                    # If yes, remove data for today
+                    delete_query = f"DELETE FROM SALESPERSON_EXECUTION_SUMMARY_TBL WHERE LOG_DATE = CURRENT_DATE()"
+                    cursor.execute(delete_query)
+
+                    # Call the stored procedure to update the table with new data
+                    build_gap_tracking_query = "CALL BUILD_GAP_TRACKING()"
+                    cursor.execute(build_gap_tracking_query)
+
+                    st.success("Data overwritten and BUILD_GAP_TRACKING() executed successfully.")
+
+                elif no_button:
+                    # If no, do nothing
+                    st.info("Data not overwritten.")
+
+            else:
+                # No data for today, proceed with the stored procedure
+                build_gap_tracking_query = "CALL BUILD_GAP_TRACKING()"
+                cursor.execute(build_gap_tracking_query)
+
+                st.success("BUILD_GAP_TRACKING() executed successfully.")
+
+        except Exception as e:
+            st.error(f"An error occurred: {str(e)}")
+
+        finally:
+            # Close the cursor and connection
+            cursor.close()
+            conn.close()
+
+
+# ============================================================================================================================================================
+# END Function to check if todays privot table data has processed.  If so will give user option to overwrite the data and if not the procedure BUILD_GAP_TRACKING()
+# Procedure will update the table SALESPERSON_EXECUTION_SUMMARY_TBL with todays data
+# ============================================================================================================================================================

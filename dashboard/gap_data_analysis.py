@@ -11,7 +11,7 @@ import snowflake.connector
 from db_utils.snowflake_utils import get_snowflake_toml, create_gap_report, get_snowflake_connection
 
 # Sidebar - Input for gap report parameters
-st.sidebar.title("Gap Analysis Parameters")
+#st.sidebar.title("Gap Analysis Parameters")
 
 # Create a connection to Snowflake
 conn_toml = get_snowflake_toml(st.session_state.get('toml_info'))

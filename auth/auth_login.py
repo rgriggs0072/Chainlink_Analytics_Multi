@@ -1,4 +1,4 @@
-from imaplib import _Authenticator
+﻿from imaplib import _Authenticator
 import streamlit as st
 import streamlit_authenticator as stauth
 from db_utils.snowflake_utils import get_snowflake_connection, fetch_user_credentials, fetch_and_store_toml_info
@@ -30,8 +30,7 @@ def main():
         cookie_key=COOKIE_KEY,
         cookie_expiry_days=0.014,  # 20 minutes as a fraction of a day
     )
-   
-    
+
     # Create the login widget
     try:
         name, authentication_status, username = authenticator.login()
@@ -43,7 +42,6 @@ def main():
         st.session_state['authentication'] = True
         st.session_state['username'] = username
 
-    
         # Fetch user roles and tenant ID from the credentials
         tenant_id = credentials['usernames'][username].get('tenant_id')
         st.session_state['tenant_id'] = tenant_id
@@ -53,16 +51,18 @@ def main():
         # Fetch and store TOML info for the tenant
         if not fetch_and_store_toml_info(tenant_id):
             st.error("Failed to retrieve or validate TOML configuration.")
-            return
+            return None  # Return None if TOML fetch fails
 
-        # Display the dashboard after successful login
-        display_dashboard(authenticator)
+        return authenticator  # ✅ Return authenticator after login
 
-    elif authentication_status == False:
+    elif authentication_status is False:
         st.error('Username/password is incorrect')
 
     elif authentication_status is None:
         st.warning('Please enter your username and password')
+
+    return None  # Return None if login fails
+
 
 
          

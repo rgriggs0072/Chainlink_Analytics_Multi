@@ -1,117 +1,96 @@
 # dashboard.py
 import streamlit as st
 
-from db_utils.snowflake_utils import get_snowflake_toml, create_gap_report, get_snowflake_connection
-import openpyxl
+from db_utils.snowflake_utils import (
+    get_snowflake_toml,
+    create_gap_report,
+    fetch_chain_schematic_data,
+    execute_query_and_close_connection,
+    fetch_supplier_schematic_summary_data,
+    fetch_supplier_names,  # Updated to use as originally intended
+    check_and_process_data,
+)
 import pandas as pd
 import altair as alt
-from db_utils.snowflake_utils import fetch_chain_schematic_data, get_snowflake_toml, fetch_and_store_toml_info, execute_query_and_close_connection,fetch_supplier_schematic_summary_data
-from db_utils.snowflake_utils import get_tenant_id,fetch_supplier_names
 from io import BytesIO
-
-
 from datetime import datetime
 
 
-def display_dashboard(authenticator):
 
-   # Sidebar - Input for gap report parameters
-    st.sidebar.title("Gap Analysis Parameters")
 
-    # Create a connection to Snowflake
-    conn_toml = get_snowflake_toml(st.session_state.get('toml_info'))
-    cursor = conn_toml.cursor()
-    
-   
-    cursor.execute("SELECT current_database(), current_schema()")
-    database_info = cursor.fetchone()
-    st.write(f"Connected to database: {database_info[0]}, schema: {database_info[1]}")
-   
+
+def fetch_distinct_values(engine, table, column):
+    query = f'SELECT DISTINCT "{column}" FROM "{table}"'
     try:
-        
-        salesperson_options = pd.read_sql('SELECT DISTINCT "SALESPERSON" FROM "SALESPERSON"', conn_toml)['SALESPERSON'].tolist()
+        df = pd.read_sql_query(query, engine)
+        return df[column].tolist()
     except Exception as e:
-        st.error(f"Error querying Salesperson table: {e}")
+        st.error(f"Error querying {table} table: {e}")
+        return []
 
 
-    store_options = pd.read_sql("SELECT DISTINCT CHAIN_NAME FROM CUSTOMERS", conn_toml)['CHAIN_NAME'].tolist()
-    supplier_options = pd.read_sql("SELECT DISTINCT SUPPLIER FROM SUPPLIER_COUNTY", conn_toml)['SUPPLIER'].tolist()
+def display_dashboard(authenticator):
+    # Create a SQLAlchemy engine for Snowflake
+    engine = get_snowflake_toml(st.session_state.get("toml_info"))
 
-    salesperson_options.sort()
-    store_options.sort()
-    supplier_options.sort()
+    # Fetch distinct options
+    salesperson_options = fetch_distinct_values(engine, "SALESPERSON", "SALESPERSON")
+    store_options = fetch_distinct_values(engine, "CUSTOMERS", "CHAIN_NAME")
+    supplier_options = fetch_distinct_values(engine, "SUPPLIER_COUNTY", "SUPPLIER")
 
-    salesperson_options.insert(0, "All")
-    store_options.insert(0, "All")
-    supplier_options.insert(0, "All")
+    # Sort and add "All" option
+    for options in [salesperson_options, store_options, supplier_options]:
+        options.sort()
+        options.insert(0, "All")
 
+    # Sidebar form for filtering
     with st.sidebar.form(key="Gap Report Report", clear_on_submit=True):
         salesperson = st.selectbox("Filter by Salesperson", salesperson_options)
         store = st.selectbox("Filter by Chain", store_options)
         supplier = st.selectbox("Filter by Supplier", supplier_options)
         submitted = st.form_submit_button("Generate Gap Report")
 
-    df = None
-
-    with st.sidebar:
-        if submitted:
-            with st.spinner('Generating report...'):
-                temp_file_path = create_gap_report(conn_toml, salesperson=salesperson, store=store, supplier=supplier)
-                with open(temp_file_path, 'rb') as f:
-                    bytes_data = f.read()
-                today = datetime.today().strftime('%Y-%m-%d')
-                file_name = f"Gap_Report_{today}.xlsx"
-
-                downloadcontainer = st.container()
-                with downloadcontainer:
-                    st.download_button(label="Download Gap Report", data=bytes_data, file_name=file_name, mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-                    st.write("File will be downloaded to your local download folder")
-
-                container = st.container()
-                with container:
-                    st.spinner('Generating report...')
-
+    if submitted:
+        with st.spinner("Generating report..."):
+            temp_file_path = create_gap_report(
+                engine, salesperson=salesperson, store=store, supplier=supplier
+            )
+            with open(temp_file_path, "rb") as f:
+                bytes_data = f.read()
+            today = datetime.today().strftime("%Y-%m-%d")
+            st.sidebar.download_button(
+                label="Download Gap Report",
+                data=bytes_data,
+                file_name=f"Gap_Report_{today}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            )
 
     # Retrieve toml_info from session state
-    toml_info = st.session_state.get('toml_info', None)
+    toml_info = st.session_state.get("toml_info")
     if not toml_info:
         st.error("TOML information is not available. Please check the tenant ID and try again.")
         return
 
-   
-
-     # Check for TOML info before rendering the dashboard
-    toml_info = st.session_state.get('toml_info')
-    if not toml_info:
-        st.error("TOML information is not available. Please check the tenant ID and try again.")
-        return
-
-    tenant_name = toml_info.get('tenant_name', 'Unknown Tenant')
-    #st.header(f"{tenant_name} Chain Dashboard")
-    
-        
-    # Get the results from the display_execution_summary function
+    # Display Execution Summary
     result = display_execution_summary(toml_info)
-    
     if result is None:
         st.error("Failed to retrieve execution summary.")
         return
-    
-    # Extract individual values from the result tuple
+
+    # Extract values from the result
     total_in_schematic, total_purchased, total_gaps, formatted_percentage = result
     Revenue_missed = total_gaps * 40.19
-    # Display dashboard header
-    tenant_name = toml_info['tenant_name']
+
+    # Header
+    tenant_name = toml_info["tenant_name"]
     st.header(f"{tenant_name} Chain Dashboard")
 
-    # ====================================================================================================================================================
-    # Execution Summary and Bar Chart in two columns (Row 1)
-    # ====================================================================================================================================================
+    # Execution Summary and Bar Chart
     with st.container():
         col1, col2 = st.columns(2)
-        
+
+        # Execution Summary
         with col1:
-                      
             st.markdown(
                 f"""
                 <div class="card text-secondary p-3 mb-2" style="max-width: 45rem; background-color: #F8F2EB; border: 2px solid #dee2e6; text-align: center; height: 400px;">
@@ -125,131 +104,141 @@ def display_dashboard(authenticator):
                     </div>
                 </div>
                 """,
-                unsafe_allow_html=True
+                unsafe_allow_html=True,
             )
-        
 
-        
-
+        # Bar Chart
         with col2:
-            # Fetch chain schematic data and create a bar chart
             chain_schematic_data = fetch_chain_schematic_data(toml_info)
-            bar_chart = alt.Chart(chain_schematic_data).mark_bar().encode(
-                x='CHAIN_NAME',
-                y='TOTAL_IN_SCHEMATIC',
-                color=alt.Color('CHAIN_NAME', scale=alt.Scale(scheme='viridis')),
-                tooltip=['CHAIN_NAME', 'TOTAL_IN_SCHEMATIC', 'PURCHASED', 'PURCHASED_PERCENTAGE']
-            ).properties(
-                width=800,
-                height=400,
-                background='#F8F2EB',
-            ).configure_title(
-                align='center',
-                fontSize=16
-            ).encode(
-                text=alt.Text('CHAIN_NAME')
+            bar_chart = (
+                alt.Chart(chain_schematic_data)
+                .mark_bar()
+                .encode(
+                    x="CHAIN_NAME",
+                    y="TOTAL_IN_SCHEMATIC",
+                    color=alt.Color("CHAIN_NAME", scale=alt.Scale(scheme="viridis")),
+                    tooltip=[
+                        "CHAIN_NAME",
+                        "TOTAL_IN_SCHEMATIC",
+                        "PURCHASED",
+                        "PURCHASED_PERCENTAGE",
+                    ],
+                )
+                .properties(width=800, height=400, background="#F8F2EB")
             )
             col2.altair_chart(bar_chart, use_container_width=False)
 
-    # ====================================================================================================================================================
-    # Salesperson Execution Summary (Row 2 Column 1) & Pivot Table for Gaps by Salesperson (Row 2 Column 2)
-    # ====================================================================================================================================================
+    # Salesperson Execution Summary and Pivot Table
     with st.container():
         row2_col1, row2_col2 = st.columns([40, 70], gap="small")
 
-        # Execute the SQL query to retrieve salesperson execution summary
-        query = "SELECT SALESPERSON, TOTAL_DISTRIBUTION, TOTAL_GAPS, EXECUTION_PERCENTAGE FROM SALESPERSON_EXECUTION_SUMMARY ORDER BY TOTAL_GAPS DESC"
-        conn_toml = get_snowflake_toml(toml_info)
-        result = execute_query_and_close_connection(query, conn_toml)
-        salesperson_df = pd.DataFrame(result, columns=['SALESPERSON', 'TOTAL_DISTRIBUTION', 'TOTAL_GAPS', 'EXECUTION_PERCENTAGE'])
-
-        # Format the DataFrame
-        salesperson_df['EXECUTION_PERCENTAGE'] = salesperson_df['EXECUTION_PERCENTAGE'].astype(float).round(2)
+        # Salesperson Execution Summary
+        query = """
+            SELECT SALESPERSON, TOTAL_DISTRIBUTION, TOTAL_GAPS, EXECUTION_PERCENTAGE 
+            FROM SALESPERSON_EXECUTION_SUMMARY 
+            ORDER BY TOTAL_GAPS DESC
+        """
+        salesperson_df = pd.read_sql_query(query, engine)
+        salesperson_df["EXECUTION_PERCENTAGE"] = salesperson_df["EXECUTION_PERCENTAGE"].astype(float).round(2)
         limited_salesperson_df = salesperson_df.head(100)
 
-        # Style and display table
-        limited_salesperson_df_html = limited_salesperson_df.to_html(classes=["table", "table-striped"], escape=False, index=False)
-        table_with_scroll = f"<div style='max-height: 365px; overflow-y: auto; background-color: #F8F2EB; text-align: center;'>{limited_salesperson_df_html}</div>"
-        row2_col1.markdown(table_with_scroll, unsafe_allow_html=True)
-        # Add download button
+        # Display table in Column 1
+        row2_col1.markdown(
+            f"""
+            <div style='max-height: 365px; overflow-y: auto; background-color: #F8F2EB; text-align: center;'>
+                {limited_salesperson_df.to_html(classes=["table", "table-striped"], escape=False, index=False)}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        # Download button for Salesperson Summary
         excel_data = BytesIO()
-        salesperson_df.to_excel(excel_data, index=False)
-        row2_col1.download_button("Download Salesperson Summary", data=excel_data, file_name="salesperson_execution_summary.xlsx", key='download_button')
+        limited_salesperson_df.to_excel(excel_data, index=False)
+        row2_col1.download_button(
+            "Download Salesperson Summary",
+            data=excel_data,
+            file_name="salesperson_execution_summary.xlsx",
+        )
 
-        # Create and display pivot table for gaps by date
-        gap_query = "SELECT SALESPERSON, TOTAL_GAPS, EXECUTION_PERCENTAGE, LOG_DATE FROM SALESPERSON_EXECUTION_SUMMARY_TBL ORDER BY TOTAL_GAPS DESC"
-        result = execute_query_and_close_connection(gap_query, conn_toml)
-        gap_df = pd.DataFrame(result, columns=['SALESPERSON', 'TOTAL_GAPS', 'EXECUTION_PERCENTAGE', 'LOG_DATE'])
+        # Gap Pivot Table
+        gap_query = """
+            SELECT SALESPERSON, TOTAL_GAPS, EXECUTION_PERCENTAGE, LOG_DATE 
+            FROM SALESPERSON_EXECUTION_SUMMARY_TBL 
+            ORDER BY TOTAL_GAPS DESC
+        """
+        gap_df = pd.read_sql_query(gap_query, engine)
+        gap_df_pivot = gap_df.pivot_table(index="SALESPERSON", columns="LOG_DATE", values="TOTAL_GAPS", margins=False)
+        gap_df_pivot.columns = pd.to_datetime(gap_df_pivot.columns).strftime("%y/%m/%d")
 
-        # Pivot the DataFrame and create a pivot table
-        gap_df_pivot = gap_df.pivot_table(index='SALESPERSON', columns='LOG_DATE', values='TOTAL_GAPS', margins=False)
-        gap_df_pivot.columns = pd.to_datetime(gap_df_pivot.columns).strftime('%y/%m/%d')
-        gap_table_with_scroll = f"<div style='max-height: 365px; overflow-y: auto; background-color: #F8F2EB;'>{gap_df_pivot.to_html(classes=['table', 'table-striped'], escape=False)}</div>"
-        row2_col2.markdown(gap_table_with_scroll, unsafe_allow_html=True)
-
-        # Add download button for gaps pivot table
+        # Display Pivot Table in Column 2
+        row2_col2.markdown(
+            f"""
+            <div style='max-height: 365px; overflow-y: auto; background-color: #F8F2EB;'>
+                {gap_df_pivot.to_html(classes=["table", "table-striped"], escape=False)}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        # Download button for Gap History
         excel_data_pivot = BytesIO()
         gap_df_pivot.to_excel(excel_data_pivot, index=True)
-        row2_col2.download_button("Download Gap History", data=excel_data_pivot, file_name="gap_history_report.xlsx", key='download_gap_button')
+        row2_col2.download_button(
+            "Download Gap History",
+            data=excel_data_pivot,
+            file_name="gap_history_report.xlsx",
+        )
 
-    # ====================================================================================================================================================
-    # Supplier Selection and Product Scatter Chart (Row 3 Column 1)
-    # ====================================================================================================================================================
+    # Supplier Selection and Scatter Chart
     row3_col1 = st.columns([100], gap="small")[0]
     with row3_col1:
-        st.markdown("<h1 style='text-align: center; font-size: 18px;'>Execution Summary by Product by Supplier</h1>",
-                    unsafe_allow_html=True)
+        st.markdown(
+            "<h1 style='text-align: center; font-size: 18px;'>Execution Summary by Product by Supplier</h1>",
+            unsafe_allow_html=True,
+        )
 
-        # Sidebar multi-select for supplier selection
-        #print("Fetching supplier names...") Debug Statement
-        supplier_names = fetch_supplier_names()  # Fetch supplier names
-        #print("Supplier names fetched: ", supplier_names)  # Debug the supplier names
-
-        if supplier_names is None:
+        supplier_names = fetch_supplier_names()  # No arguments passed as per original function
+        if not supplier_names:
             st.error("Failed to fetch supplier names")
-            return  # Exit if supplier names cannot be fetched
+            return
 
         selected_suppliers = st.sidebar.multiselect(
             "Select Suppliers",
             supplier_names,
-            default=st.session_state.get('selected_suppliers', [])
+            default=st.session_state.get("selected_suppliers", []),
         )
+        st.session_state["selected_suppliers"] = selected_suppliers
 
-        # Store the selected suppliers in session state
-        st.session_state['selected_suppliers'] = selected_suppliers
-       # print("Did we get the supplier names here? ", st.session_state['selected_suppliers'])  # Debug statement
-
-        # Display the data
-        if st.session_state['selected_suppliers']:
-           # print("Selected suppliers: ", st.session_state['selected_suppliers'])  # Debug selected suppliers
-            df = fetch_supplier_schematic_summary_data(st.session_state['selected_suppliers'])
-            #print("Fetched data: ", df)  # Debug the fetched data
-
+        if selected_suppliers:
+            df = fetch_supplier_schematic_summary_data(selected_suppliers)
             if df is not None and not df.empty:
-                df["Purchased_Percentage"] = df["Purchased_Percentage"].astype(float)
                 df["Purchased_Percentage_Display"] = df["Purchased_Percentage"] / 100
-
-                scatter_chart = alt.Chart(df).mark_circle().encode(
-                    x='Total_In_Schematic',
-                    y=alt.Y('Purchased_Percentage:Q', title='Purchased Percentage'),
-                    color='PRODUCT_NAME',
-                    tooltip=[
-                        'PRODUCT_NAME', 'UPC', 'Total_In_Schematic', 'Total_Purchased',
-                        alt.Tooltip('Purchased_Percentage_Display:Q', format='.2%', title='Purchased Percentage')
-                    ]
-                ).interactive()
-
+                scatter_chart = (
+                    alt.Chart(df)
+                    .mark_circle()
+                    .encode(
+                        x="Total_In_Schematic",
+                        y=alt.Y("Purchased_Percentage_Display:Q", title="Purchased Percentage"),
+                        color="PRODUCT_NAME",
+                        tooltip=[
+                            "PRODUCT_NAME",
+                            "UPC",
+                            "Total_In_Schematic",
+                            "Total_Purchased",
+                            alt.Tooltip(
+                                "Purchased_Percentage_Display:Q", format=".2%", title="Purchased Percentage"
+                            ),
+                        ],
+                    )
+                    .interactive()
+                )
                 st.altair_chart(scatter_chart, use_container_width=True)
-
-                # Button to clear the selection after displaying the chart
-                if st.button("Clear Selection"):
-                   #print("Clearing selection...")  # Debug the button press
-                    st.session_state['selected_suppliers'] = []  # Clear the list
-                    st.rerun()  # Rerun the app to update the UI
             else:
-                st.write("No data available to display the chart. Please ensure the suppliers are selected and data exists for them.")
+                st.write("No data available for the selected suppliers.")
         else:
-            st.write("Please select one or more suppliers to view the chart.")
+            st.write("Please select suppliers to view the chart.")
+
+
+
 
 # =================================================================================================================================================
 # END Creates scatter chart for product execution by supplier
@@ -264,24 +253,43 @@ def display_dashboard(authenticator):
 def display_execution_summary(toml_info):
     conn_toml = get_snowflake_toml(toml_info)
     if conn_toml is None:
-        return None
+        return 0, 0, 0, "0.00"
 
     cursor = conn_toml.cursor()
     query = """
-        SELECT SUM("In_Schematic") AS total_in_schematic,
-               SUM("PURCHASED_YES_NO") AS purchased,
-               SUM("PURCHASED_YES_NO") / COUNT(*) AS purchased_percentage
-        FROM GAP_REPORT;
+        SELECT 
+        SUM("In_Schematic") AS TOTAL_IN_SCHEMATIC,
+        SUM("PURCHASED_YES_NO") AS PURCHASED,
+        (SUM("PURCHASED_YES_NO") / NULLIF(COUNT(*),0)) AS PURCHASED_PERCENTAGE
+    FROM GAP_REPORT;
     """
-    cursor.execute(query)
-    result = cursor.fetchall()
+
+    try:
+        cursor.execute(query)
+        result = cursor.fetchone()
+
+        cursor.close()
+        conn_toml.close()
+
+        if result and any(result):
+            total_in_schematic = result[0] or 0
+            purchased = result[1] or 0
+            purchased_percentage = result[2] or 0
+            formatted_percentage = f"{purchased_percentage * 100:.2f}"
+
+            total_gaps = total_in_schematic - purchased
+
+            return total_in_schematic, purchased, total_gaps, formatted_percentage
+        else:
+            return 0, 0, 0, "0.00"
+    except Exception as e:
+        #logging.error(f"Failed execution summary query: {e}")
+        st.error(f"Query Error: {str(e)}")
+        return 0, 0, 0, "0.00"
+
+
+    cursor.close()
     conn_toml.close()
 
-    if result:
-        df = pd.DataFrame(result, columns=["TOTAL_IN_SCHEMATIC", "PURCHASED", "PURCHASED_PERCENTAGE"])
-        total_gaps = df['TOTAL_IN_SCHEMATIC'].iloc[0] - df['PURCHASED'].iloc[0]
-        formatted_percentage = f"{df['PURCHASED_PERCENTAGE'].iloc[0] * 100:.2f}"
-        return df['TOTAL_IN_SCHEMATIC'].iloc[0], df['PURCHASED'].iloc[0], total_gaps, formatted_percentage
-    return None
 
 

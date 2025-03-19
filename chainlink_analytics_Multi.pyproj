@@ -41,6 +41,8 @@
     <Compile Include="auth\utilities\validator.py" />
     <Compile Include="auth\utilities\__init__.py" />
     <Compile Include="chainlink_main.py" />
+    <Compile Include="dashboard\ai_insights.py" />
+    <Compile Include="dashboard\dashboard_ai.py" />
     <Compile Include="dashboard\dashboard_main.py" />
     <Compile Include="dashboard\dashboard_test.py" />
     <Compile Include="dashboard\gap_data_analysis.py" />
@@ -49,6 +51,7 @@
     <Compile Include="dataloader\Load_Misc_distro_grid_data.py" />
     <Compile Include="dataloader\reset_data_update.py" />
     <Compile Include="db_utils\distro_grid_snowflake_uploader.py" />
+    <Compile Include="db_utils\Reset_Schedule_to_Snowflake_Uploader.py" />
     <Compile Include="db_utils\snowflake_connection.py" />
     <Compile Include="db_utils\snowflake_utils.py" />
     <Compile Include="email_utils\email_util.py" />
@@ -56,7 +59,9 @@
     <Compile Include="Formatting\ResetSH_formatter.py" />
     <Compile Include="Formatting\test_page.py" />
     <Compile Include="menu_items.py" />
+    <Compile Include="pages\gap_review.py" />
     <Compile Include="reports\reports.py" />
+    <Compile Include="utils\ai_utils.py" />
     <Compile Include="utils\util.py" />
   </ItemGroup>
   <ItemGroup>
@@ -75,6 +80,7 @@
     <Folder Include="admin\" />
     <Folder Include="dataloader\" />
     <Folder Include="Formatting\" />
+    <Folder Include="pages\" />
     <Folder Include="reports\" />
     <Folder Include="utils\" />
   </ItemGroup>
